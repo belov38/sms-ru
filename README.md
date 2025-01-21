@@ -9,7 +9,7 @@
 ## Установка
 
 ```bash
-npm install sms-ru
+npm install @belov.ai/sms-ru
 ```
 
 ## Использование
@@ -21,22 +21,22 @@ npm install sms-ru
 export SMSRU_API_ID=your-api-key
 
 # Отправка SMS
-npx sms-ru 79001234567 "Hello World"
+npx @belov.ai/sms-ru 79001234567 "Hello World"
 
 # Тестовый режим (без реальной отправки)
-npx sms-ru 79001234567 "Test message" --test
+npx @belov.ai/sms-ru 79001234567 "Test message" --test
 
 # С указанием отправителя
-npx sms-ru 79001234567 "Hello" --from "Company"
+npx @belov.ai/sms-ru 79001234567 "Hello" --from "Company"
 
 # С транслитерацией
-npx sms-ru 79001234567 "Привет мир" --translit
+npx @belov.ai/sms-ru 79001234567 "Привет мир" --translit
 ```
 
 ### В коде
 
 ```typescript
-import { sendSMS } from 'sms-ru';
+import { sendSMS } from '@belov.ai/sms-ru';
 
 // Простая отправка
 const result = await sendSMS({

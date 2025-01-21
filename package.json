@@ -1,5 +1,5 @@
 {
-  "name": "sms-ru",
+  "name": "@belov.ai/sms-ru",
   "version": "0.0.1",
   "description": "Библиотека для отправки sms через sms.ru используя нативный nodejs fetch()",
   "main": "dist/index.js",
@@ -7,6 +7,11 @@
   "bin": {
     "sms-ru": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
