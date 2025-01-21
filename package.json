@@ -1,0 +1,41 @@
+{
+  "name": "sms-ru",
+  "version": "0.0.1",
+  "description": "Библиотека для отправки sms через sms.ru используя нативный nodejs fetch()",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "sms-ru": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "prepare": "npm run build",
+    "start": "node dist/cli.js",
+    "dev": "ts-node src/cli.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/belov38/sms-ru.git"
+  },
+  "keywords": [
+    "sms",
+    "sms.ru"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Ilia Belov",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/belov38/sms-ru/issues"
+  },
+  "homepage": "https://github.com/belov38/sms-ru#readme",
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "esbuild": "^0.24.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
