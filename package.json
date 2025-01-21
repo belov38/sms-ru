@@ -1,6 +1,6 @@
 {
   "name": "@belov.ai/sms-ru",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Библиотека для отправки sms через sms.ru используя нативный nodejs fetch()",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

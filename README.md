@@ -14,6 +14,56 @@ npm install @belov.ai/sms-ru
 
 ## Использование
 
+### В коде
+
+```typescript
+import { SMSRuClient } from '@belov.ai/sms-ru';
+
+// Создаем клиент с API ключом
+const client = new SMSRuClient('your-api-key');
+
+// Простая отправка
+const result = await client.sendSMS({
+  phones: '79001234567',
+  message: 'Hello World'
+});
+
+// Отправка нескольким получателям
+const result = await client.sendSMS({
+  phones: ['79001234567', '79007654321'],
+  message: 'Hello World',
+  options: {
+    test: true, // Тестовый режим
+    from: 'Company', // Имя отправителя
+    translit: true, // Транслитерация
+    limit: 10 // Максимальная стоимость в рублях
+  }
+});
+
+// Обработка ошибок
+try {
+  const result = await client.sendSMS({
+    phones: '79001234567',
+    message: 'Hello World'
+  });
+  console.log('Balance:', result.balance);
+} catch (error) {
+  if (error instanceof SMSError) {
+    console.error('SMS Error:', error.message);
+    console.error('Status Code:', error.statusCode);
+  }
+}
+
+// Альтернативный способ через переменную окружения
+import { sendSMS } from '@belov.ai/sms-ru';
+
+// Требует установки SMSRU_API_ID
+const result = await sendSMS({
+  phones: '79001234567',
+  message: 'Hello World'
+});
+```
+
 ### Через CLI
 
 ```bash
@@ -33,47 +83,17 @@ npx @belov.ai/sms-ru 79001234567 "Hello" --from "Company"
 npx @belov.ai/sms-ru 79001234567 "Привет мир" --translit
 ```
 
-### В коде
-
-```typescript
-import { sendSMS } from '@belov.ai/sms-ru';
-
-// Простая отправка
-const result = await sendSMS({
-  phones: '79001234567',
-  message: 'Hello World'
-});
-
-// Отправка нескольким получателям
-const result = await sendSMS({
-  phones: ['79001234567', '79007654321'],
-  message: 'Hello World',
-  options: {
-    test: true, // Тестовый режим
-    from: 'Company', // Имя отправителя
-    translit: true, // Транслитерация
-    limit: 10 // Максимальная стоимость в рублях
-  }
-});
-
-// Обработка ошибок
-try {
-  const result = await sendSMS({
-    phones: '79001234567',
-    message: 'Hello World'
-  });
-  console.log('Balance:', result.balance);
-} catch (error) {
-  if (error instanceof SMSError) {
-    console.error('SMS Error:', error.message);
-    console.error('Status Code:', error.statusCode);
-  }
-}
-```
-
 ## API
 
-### sendSMS(params)
+### new SMSRuClient(apiId)
+
+Создает новый экземпляр клиента для работы с SMS.RU API.
+
+#### Параметры
+
+- `apiId`: string - Ваш API ключ от sms.ru
+
+### client.sendSMS(params)
 
 Основная функция для отправки SMS.
 

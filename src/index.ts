@@ -395,125 +395,140 @@ export class SMSError extends Error {
   }
 }
 
-async function checkCost(
-  phones: string[],
-  message: string,
-): Promise<CostResponse> {
-  const params = new URLSearchParams({
-    api_id: process.env.SMSRU_API_ID!,
-    json: '1',
-    msg: message,
-  });
+export class SMSRuClient {
+  private apiId: string;
 
-  // Добавляем телефоны
-  phones.forEach((phone) => params.append('to', phone));
-
-  const response = await fetch(`https://sms.ru/sms/cost?${params.toString()}`, {
-    method: 'POST',
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+  constructor(apiId: string) {
+    this.apiId = apiId;
   }
 
-  const data = (await response.json()) as CostResponse;
+  private async checkCost(
+    phones: string[],
+    message: string,
+  ): Promise<CostResponse> {
+    const params = new URLSearchParams({
+      api_id: this.apiId,
+      json: '1',
+      msg: message,
+    });
 
-  if (data.status === 'ERROR') {
-    throw new SMSError(
-      `Cost check failed: ${data.status_code}`,
-      data.status_code,
-      data,
-    );
+    // Добавляем телефоны
+    phones.forEach((phone) => params.append('to', phone));
+
+    const response = await fetch(`https://sms.ru/sms/cost?${params.toString()}`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = (await response.json()) as CostResponse;
+
+    if (data.status === 'ERROR') {
+      throw new SMSError(
+        `Cost check failed: ${data.status_code}`,
+        data.status_code,
+        data,
+      );
+    }
+
+    return data;
   }
 
-  return data;
+  async sendSMS({
+    phones,
+    message,
+    options = {},
+  }: SendSMSParams): Promise<SMSResponse> {
+    // Преобразуем phones в массив
+    const phoneArray = Array.isArray(phones) ? phones : [phones];
+
+    // Проверяем, что есть хотя бы один телефон
+    if (phoneArray.length === 0) {
+      throw new Error('No phone numbers provided');
+    }
+
+    // Проверяем, что сообщение не пустое
+    if (!message.trim()) {
+      throw new Error('Message cannot be empty');
+    }
+
+    // Если установлен лимит стоимости, проверяем предварительную стоимость
+    if (options.limit !== undefined) {
+      const costData = await this.checkCost(phoneArray, message);
+
+      if (costData.total_cost > options.limit) {
+        throw new SMSError(
+          `Cost limit exceeded. Expected: ${options.limit}, Actual: ${costData.total_cost}`,
+          SMSRuStatusCode.INSUFFICIENT_FUNDS,
+          costData,
+        );
+      }
+    }
+
+    // Формируем параметры запроса
+    const params = new URLSearchParams({
+      api_id: this.apiId,
+      json: '1',
+      msg: message,
+    });
+
+    // Добавляем телефоны
+    phoneArray.forEach((phone) => params.append('to', phone));
+
+    // Добавляем опциональные параметры
+    if (options.from) params.append('from', options.from);
+    if (options.time) params.append('time', options.time.toString());
+    if (options.translit) params.append('translit', '1');
+    if (options.test) params.append('test', '1');
+    if (options.partner_id) params.append('partner_id', options.partner_id);
+
+    // Отправляем запрос
+    const response = await fetch('https://sms.ru/sms/send', {
+      method: 'POST',
+      body: params,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = (await response.json()) as SMSResponse;
+
+    // Проверяем общий статус ответа
+    if (data.status === 'ERROR') {
+      throw new SMSError(
+        `SMS sending failed: ${data.status_code}`,
+        data.status_code,
+        data,
+      );
+    }
+
+    // Проверяем статусы отдельных сообщений
+    const errors = Object.entries(data.sms)
+      .filter(([_, info]) => info.status === 'ERROR')
+      .map(([phone, info]) => `${phone}: ${info.status_text}`);
+
+    if (errors.length > 0) {
+      throw new SMSError(
+        `Some messages failed to send:\n${errors.join('\n')}`,
+        data.status_code,
+        data,
+      );
+    }
+
+    return data;
+  }
 }
 
-export async function sendSMS({
-  phones,
-  message,
-  options = {},
-}: SendSMSParams): Promise<SMSResponse> {
-  if (!process.env.SMSRU_API_ID) {
+// Для обратной совместимости и CLI
+export async function sendSMS(params: SendSMSParams): Promise<SMSResponse> {
+  const apiId = process.env.SMSRU_API_ID;
+  if (!apiId) {
     throw new Error('SMSRU_API_ID environment variable is not set');
   }
 
-  // Преобразуем phones в массив
-  const phoneArray = Array.isArray(phones) ? phones : [phones];
-
-  // Проверяем, что есть хотя бы один телефон
-  if (phoneArray.length === 0) {
-    throw new Error('No phone numbers provided');
-  }
-
-  // Проверяем, что сообщение не пустое
-  if (!message.trim()) {
-    throw new Error('Message cannot be empty');
-  }
-
-  // Если установлен лимит стоимости, проверяем предварительную стоимость
-  if (options.limit !== undefined) {
-    const costData = await checkCost(phoneArray, message);
-
-    if (costData.total_cost > options.limit) {
-      throw new SMSError(
-        `Cost limit exceeded. Expected: ${options.limit}, Actual: ${costData.total_cost}`,
-        SMSRuStatusCode.INSUFFICIENT_FUNDS,
-        costData,
-      );
-    }
-  }
-
-  // Формируем параметры запроса
-  const params = new URLSearchParams({
-    api_id: process.env.SMSRU_API_ID,
-    json: '1',
-    msg: message,
-  });
-
-  // Добавляем телефоны
-  phoneArray.forEach((phone) => params.append('to', phone));
-
-  // Добавляем опциональные параметры
-  if (options.from) params.append('from', options.from);
-  if (options.time) params.append('time', options.time.toString());
-  if (options.translit) params.append('translit', '1');
-  if (options.test) params.append('test', '1');
-  if (options.partner_id) params.append('partner_id', options.partner_id);
-
-  // Отправляем запрос
-  const response = await fetch('https://sms.ru/sms/send', {
-    method: 'POST',
-    body: params,
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const data = (await response.json()) as SMSResponse;
-
-  // Проверяем общий статус ответа
-  if (data.status === 'ERROR') {
-    throw new SMSError(
-      `SMS sending failed: ${data.status_code}`,
-      data.status_code,
-      data,
-    );
-  }
-
-  // Проверяем статусы отдельных сообщений
-  const errors = Object.entries(data.sms)
-    .filter(([_, info]) => info.status === 'ERROR')
-    .map(([phone, info]) => `${phone}: ${info.status_text}`);
-
-  if (errors.length > 0) {
-    throw new SMSError(
-      `Some messages failed to send:\n${errors.join('\n')}`,
-      data.status_code,
-      data,
-    );
-  }
-
-  return data;
+  const client = new SMSRuClient(apiId);
+  return client.sendSMS(params);
 } 
