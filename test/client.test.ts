@@ -85,6 +85,23 @@ test('returns response when only some phones fail', async () => {
   assert.equal(result.sms['79001234567'].sms_id, '1');
 });
 
+test('throws SMSError with phone code when no phone is accepted', async () => {
+  replies.push(
+    json({
+      status: 'OK',
+      status_code: 100,
+      sms: { '7900': { status: 'ERROR', status_code: 202, status_text: 'bad phone' } },
+    }),
+  );
+  await assert.rejects(
+    new SMSRuClient('k').sendSMS({ phones: '7900', message: 'hi' }),
+    (error: unknown) =>
+      error instanceof SMSError &&
+      error.statusCode === SMSRuStatusCode.INVALID_PHONE &&
+      error.message.includes('7900: 202 bad phone'),
+  );
+});
+
 test('throws SMSError with API code and text on request error', async () => {
   replies.push(json({ status: 'ERROR', status_code: 200, status_text: 'Неправильный api_id' }));
   await assert.rejects(

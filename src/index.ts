@@ -540,8 +540,8 @@ export class SMSRuClient {
   }
 
   /**
-   * Отправляет SMS. Бросает SMSError, если запрос не выполнен целиком.
-   * Если запрос выполнен, но часть номеров отклонена, ответ возвращается
+   * Отправляет SMS. Бросает SMSError, если запрос не выполнен или не принят
+   * ни один номер. Если отклонена только часть номеров, ответ возвращается
    * без исключения: проверяйте `result.sms[phone].status`.
    */
   async sendSMS({
@@ -594,6 +594,18 @@ export class SMSRuClient {
       throw new SMSError(
         `SMS sending failed: ${describeStatus(data)}`,
         data.status_code,
+        data,
+      );
+    }
+
+    // Если не принят ни один номер, это ошибка; при частичном отказе
+    // возвращаем ответ, чтобы повторная отправка не дублировала SMS
+    const results = Object.entries(data.sms ?? {});
+    const failed = results.filter(([_, info]) => info.status === 'ERROR');
+    if (results.length > 0 && failed.length === results.length) {
+      throw new SMSError(
+        `SMS sending failed:\n${failed.map(([phone, info]) => `${phone}: ${describeStatus(info)}`).join('\n')}`,
+        failed[0][1].status_code,
         data,
       );
     }
