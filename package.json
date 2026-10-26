@@ -14,11 +14,11 @@
   ],
   "scripts": {
     "build": "tsc",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prebuild": "npm run clean",
     "prepare": "npm run build",
     "start": "node dist/cli.js",
-    "dev": "ts-node src/cli.ts"
+    "dev": "tsx src/cli.ts"
   },
   "repository": {
     "type": "git",
@@ -29,7 +29,7 @@
     "sms.ru"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22"
   },
   "author": "Ilia Belov",
   "license": "MIT",
@@ -38,9 +38,8 @@
   },
   "homepage": "https://github.com/belov38/sms-ru#readme",
   "devDependencies": {
-    "@types/node": "^22.10.7",
-    "esbuild": "^0.24.2",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.7.3"
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
