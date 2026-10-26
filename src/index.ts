@@ -50,7 +50,10 @@ export enum SMSRuStatusCode {
   FOREIGN_NUMBER = 214,
   NUMBER_IN_SPAM_LIST = 215,
   FORBIDDEN_MESSAGE = 216,
+  CREDIT_AD_WITHOUT_DISCLAIMER = 217,
   SERVICE_TEMPORARY_UNAVAILABLE = 220,
+  SENDER_NAME_REQUIRED = 221,
+  TEMPLATE_MISMATCH = 222,
   DAILY_MESSAGE_LIMIT = 230,
   DUPLICATE_MESSAGE_PER_MINUTE = 231,
   DUPLICATE_MESSAGE_PER_DAY = 232,
@@ -70,6 +73,8 @@ export enum SMSRuStatusCode {
   HOSTING_IP_LIMIT = 506,
   INVALID_IP = 507,
   CALLS_LIMIT_EXCEEDED = 508,
+  AUTH_CODE_LIMIT = 509,
+  COUNTRY_BLOCKED = 550,
   INVALID_CALLBACK_URL = 901,
   CALLBACK_HANDLER_NOT_FOUND = 902,
 }
@@ -125,7 +130,7 @@ const statusCodeDetails: Record<SMSRuStatusCode, StatusCodeDetails> = {
   },
   [SMSRuStatusCode.INVALID_API_ID]: {
     description: 'Неправильный api_id',
-    category: 'validation_error',
+    category: 'auth_error',
   },
   [SMSRuStatusCode.INSUFFICIENT_FUNDS]: {
     description: 'Не хватает средств на лицевом счету',
@@ -195,9 +200,24 @@ const statusCodeDetails: Record<SMSRuStatusCode, StatusCodeDetails> = {
     description: 'В тексте сообщения содержится запрещенное слово',
     category: 'validation_error',
   },
+  [SMSRuStatusCode.CREDIT_AD_WITHOUT_DISCLAIMER]: {
+    description:
+      'В тексте сообщения содержится реклама кредита, но нет фразы "Оцените свои финансовые возможности и риски"',
+    category: 'validation_error',
+  },
   [SMSRuStatusCode.SERVICE_TEMPORARY_UNAVAILABLE]: {
     description: 'Сервис временно недоступен, попробуйте чуть позже',
     category: 'server_error',
+  },
+  [SMSRuStatusCode.SENDER_NAME_REQUIRED]: {
+    description:
+      'Необходимо создать буквенного отправителя, соответствующего вашему сайту, названию юр. лица или товарному знаку',
+    category: 'validation_error',
+  },
+  [SMSRuStatusCode.TEMPLATE_MISMATCH]: {
+    description:
+      'Включена опция "отправлять только шаблонированные сообщения", но сообщение не соответствует ни одному одобренному шаблону',
+    category: 'validation_error',
   },
   [SMSRuStatusCode.DAILY_MESSAGE_LIMIT]: {
     description:
@@ -285,6 +305,15 @@ const statusCodeDetails: Record<SMSRuStatusCode, StatusCodeDetails> = {
       'Превышен лимит: Превышено количество допустимых звонков за 5 минут',
     category: 'limit_error',
   },
+  [SMSRuStatusCode.AUTH_CODE_LIMIT]: {
+    description:
+      'Превышен лимит: Слишком много сообщений с кодами авторизации за короткий промежуток времени',
+    category: 'limit_error',
+  },
+  [SMSRuStatusCode.COUNTRY_BLOCKED]: {
+    description: 'Страна заблокирована в целях безопасности',
+    category: 'validation_error',
+  },
   [SMSRuStatusCode.INVALID_CALLBACK_URL]: {
     description: 'Callback: URL неверный (не начинается на http://)',
     category: 'callback_error',
@@ -308,11 +337,13 @@ export interface SMSResponse {
     };
   };
   balance?: number;
+  status_text?: string;
 }
 
 export interface CostResponse {
   status: 'OK' | 'ERROR';
   status_code: SMSRuStatusCode;
+  status_text?: string;
   sms: {
     [phone: string]: {
       status: 'OK' | 'ERROR';
@@ -329,11 +360,21 @@ export interface CostResponse {
 export interface SendSMSOptions {
   from?: string;
   time?: number;
+  ttl?: number; // Message lifetime in minutes (1-1440)
+  daytime?: boolean; // Postpone night-time messages to 10:00 recipient time
+  ip?: string; // End user's IP address for SMS.RU abuse protection
   translit?: boolean;
   test?: boolean;
   partner_id?: string;
   limit?: number; // Maximum cost limit in rubles
 }
+
+export interface SMSRuClientOptions {
+  timeoutMs?: number; // Request timeout, 30000 by default
+}
+
+// Максимум номеров в одном запросе к SMS.RU
+export const MAX_PHONES_PER_REQUEST = 100;
 
 // Вспомогательные функции
 export function getStatusDescription(code: SMSRuStatusCode): string {
@@ -378,7 +419,7 @@ export function isValidCode(code: number): code is SMSRuStatusCode {
   return code in SMSRuStatusCode;
 }
 
-interface SendSMSParams {
+export interface SendSMSParams {
   phones: string | string[];
   message: string;
   options?: SendSMSOptions;
@@ -387,47 +428,109 @@ interface SendSMSParams {
 export class SMSError extends Error {
   constructor(
     message: string,
-    public statusCode: SMSRuStatusCode,
+    // Код SMS.RU; отсутствует для сетевых ошибок и ошибок валидации
+    public statusCode?: SMSRuStatusCode,
     public response?: SMSResponse | CostResponse,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'SMSError';
   }
 }
 
+// Предварительная стоимость превышает options.limit, отправка не выполнялась
+export class SMSCostLimitError extends SMSError {
+  constructor(
+    public limit: number,
+    public cost: number,
+    response: CostResponse,
+  ) {
+    super(`Cost limit exceeded: ${cost} > ${limit}`, undefined, response);
+    this.name = 'SMSCostLimitError';
+  }
+}
+
+function describeStatus(data: {
+  status_code: SMSRuStatusCode;
+  status_text?: string;
+}): string {
+  return `${data.status_code} ${data.status_text ?? getStatusDescription(data.status_code)}`;
+}
+
 export class SMSRuClient {
   private apiId: string;
+  private timeoutMs: number;
 
-  constructor(apiId: string) {
+  constructor(apiId: string, options: SMSRuClientOptions = {}) {
     this.apiId = apiId;
+    this.timeoutMs = options.timeoutMs ?? 30000;
+  }
+
+  // POST с параметрами в теле, чтобы api_id не попадал в URL и логи
+  private async request<T>(path: string, params: URLSearchParams): Promise<T> {
+    let response: Response;
+    let body: string;
+    try {
+      response = await fetch(`https://sms.ru${path}`, {
+        method: 'POST',
+        body: params,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+      body = await response.text();
+    } catch (error) {
+      throw new SMSError(
+        `Request to ${path} failed: ${(error as Error).message}`,
+        undefined,
+        undefined,
+        { cause: error },
+      );
+    }
+
+    if (!response.ok) {
+      throw new SMSError(`HTTP error ${response.status} from ${path}`);
+    }
+
+    try {
+      return JSON.parse(body) as T;
+    } catch (error) {
+      throw new SMSError(
+        `Invalid JSON response from ${path}: ${body.slice(0, 200)}`,
+        undefined,
+        undefined,
+        { cause: error },
+      );
+    }
+  }
+
+  private baseParams(
+    phones: string[],
+    message: string,
+    options: SendSMSOptions,
+  ): URLSearchParams {
+    const params = new URLSearchParams({
+      api_id: this.apiId,
+      json: '1',
+      to: phones.join(','),
+      msg: message,
+    });
+    if (options.from) params.append('from', options.from);
+    if (options.translit) params.append('translit', '1');
+    return params;
   }
 
   private async checkCost(
     phones: string[],
     message: string,
+    options: SendSMSOptions,
   ): Promise<CostResponse> {
-    const params = new URLSearchParams({
-      api_id: this.apiId,
-      json: '1',
-      msg: message,
-    });
-
-    // Добавляем телефоны
-    phones.forEach((phone) => params.append('to', phone));
-
-    const response = await fetch(`https://sms.ru/sms/cost?${params.toString()}`, {
-      method: 'POST',
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = (await response.json()) as CostResponse;
+    const data = await this.request<CostResponse>(
+      '/sms/cost',
+      this.baseParams(phones, message, options),
+    );
 
     if (data.status === 'ERROR') {
       throw new SMSError(
-        `Cost check failed: ${data.status_code}`,
+        `Cost check failed: ${describeStatus(data)}`,
         data.status_code,
         data,
       );
@@ -436,6 +539,11 @@ export class SMSRuClient {
     return data;
   }
 
+  /**
+   * Отправляет SMS. Бросает SMSError, если запрос не выполнен целиком.
+   * Если запрос выполнен, но часть номеров отклонена, ответ возвращается
+   * без исключения: проверяйте `result.sms[phone].status`.
+   */
   async sendSMS({
     phones,
     message,
@@ -446,73 +554,45 @@ export class SMSRuClient {
 
     // Проверяем, что есть хотя бы один телефон
     if (phoneArray.length === 0) {
-      throw new Error('No phone numbers provided');
+      throw new SMSError('No phone numbers provided');
+    }
+
+    if (phoneArray.length > MAX_PHONES_PER_REQUEST) {
+      throw new SMSError(
+        `Too many phone numbers: ${phoneArray.length}, maximum is ${MAX_PHONES_PER_REQUEST} per request`,
+      );
     }
 
     // Проверяем, что сообщение не пустое
     if (!message.trim()) {
-      throw new Error('Message cannot be empty');
+      throw new SMSError('Message cannot be empty');
     }
 
     // Если установлен лимит стоимости, проверяем предварительную стоимость
     if (options.limit !== undefined) {
-      const costData = await this.checkCost(phoneArray, message);
+      const costData = await this.checkCost(phoneArray, message, options);
 
       if (costData.total_cost > options.limit) {
-        throw new SMSError(
-          `Cost limit exceeded. Expected: ${options.limit}, Actual: ${costData.total_cost}`,
-          SMSRuStatusCode.INSUFFICIENT_FUNDS,
-          costData,
-        );
+        throw new SMSCostLimitError(options.limit, costData.total_cost, costData);
       }
     }
 
-    // Формируем параметры запроса
-    const params = new URLSearchParams({
-      api_id: this.apiId,
-      json: '1',
-      msg: message,
-    });
-
-    // Добавляем телефоны
-    phoneArray.forEach((phone) => params.append('to', phone));
+    const params = this.baseParams(phoneArray, message, options);
 
     // Добавляем опциональные параметры
-    if (options.from) params.append('from', options.from);
     if (options.time) params.append('time', options.time.toString());
-    if (options.translit) params.append('translit', '1');
+    if (options.ttl !== undefined) params.append('ttl', options.ttl.toString());
+    if (options.daytime) params.append('daytime', '1');
+    if (options.ip) params.append('ip', options.ip);
     if (options.test) params.append('test', '1');
     if (options.partner_id) params.append('partner_id', options.partner_id);
 
-    // Отправляем запрос
-    const response = await fetch('https://sms.ru/sms/send', {
-      method: 'POST',
-      body: params,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = (await response.json()) as SMSResponse;
+    const data = await this.request<SMSResponse>('/sms/send', params);
 
     // Проверяем общий статус ответа
     if (data.status === 'ERROR') {
       throw new SMSError(
-        `SMS sending failed: ${data.status_code}`,
-        data.status_code,
-        data,
-      );
-    }
-
-    // Проверяем статусы отдельных сообщений
-    const errors = Object.entries(data.sms)
-      .filter(([_, info]) => info.status === 'ERROR')
-      .map(([phone, info]) => `${phone}: ${info.status_text}`);
-
-    if (errors.length > 0) {
-      throw new SMSError(
-        `Some messages failed to send:\n${errors.join('\n')}`,
+        `SMS sending failed: ${describeStatus(data)}`,
         data.status_code,
         data,
       );
@@ -526,9 +606,9 @@ export class SMSRuClient {
 export async function sendSMS(params: SendSMSParams): Promise<SMSResponse> {
   const apiId = process.env.SMSRU_API_ID;
   if (!apiId) {
-    throw new Error('SMSRU_API_ID environment variable is not set');
+    throw new SMSError('SMSRU_API_ID environment variable is not set');
   }
 
   const client = new SMSRuClient(apiId);
   return client.sendSMS(params);
-} 
+}

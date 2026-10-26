@@ -18,7 +18,8 @@
     "prebuild": "npm run clean",
     "prepare": "npm run build",
     "start": "node dist/cli.js",
-    "dev": "tsx src/cli.ts"
+    "dev": "tsx src/cli.ts",
+    "test": "tsc -p tsconfig.test.json && node --import tsx --test test/*.test.ts"
   },
   "repository": {
     "type": "git",
